@@ -1,0 +1,10 @@
+<mujoco model="ur5e_lab2_scene">
+  <!--
+    Backwards-compatible alias for the lab scene.
+
+    The scene content now lives in lab_scene.xml (the path referenced by
+    src/ur5e_common.py:MJCF_SCENE_PATH). This wrapper stays so older notes,
+    scripts, and viewer commands that point at models/scene.xml keep working.
+  -->
+  <include file="lab_scene.xml"/>
+</mujoco>

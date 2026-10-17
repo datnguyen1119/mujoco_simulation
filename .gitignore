@@ -1,0 +1,5 @@
+lab2_ur5e/models/mujoco_menagerie/
+.venv/
+.vscode/
+.claude/
+.pytest_cache/
