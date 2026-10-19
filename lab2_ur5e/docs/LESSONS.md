@@ -79,7 +79,7 @@ file's `meshdir="assets"` relative to the **top-level** scene file, so
 cd lab2_ur5e/models
 git clone --depth 1 --filter=blob:none --sparse \
     https://github.com/google-deepmind/mujoco_menagerie.git
-git -C mujoco_menagerie sparse-checkout set universal_robots_ur5e
+git -C mujoco_menagerie sparse-checkout set universal_robots_ur5e robotiq_2f85  # Lab 3+ needs the gripper
 ln -s mujoco_menagerie/universal_robots_ur5e/assets assets
 ```
 
