@@ -185,7 +185,14 @@ Read the four controllers in line order: each one is an upgrade of the previous.
 ### 4.4 Group C: integration
 
 #### `c3_draw_cube.py` (393 lines): ★ the capstone, worth reading
-The end-effector draws the 12 edges of a cube.
+The end-effector traces a 10 cm cube. Full walkthrough:
+[docs/C3_DRAW_CUBE.md](docs/C3_DRAW_CUBE.md).
+⚠️ It currently draws 3 face diagonals instead of 3 top edges
+([LESSONS.md §6](docs/LESSONS.md)).
+
+How one segment is drawn: IK **only at the two vertices**, then a quintic in
+**joint space** between them, so the EE path between vertices is slightly
+curved (2–5 mm per 10 cm edge).
 
 ```
 cube_vertices (69) → cube_edges (91) → cube_drawing_path (111)

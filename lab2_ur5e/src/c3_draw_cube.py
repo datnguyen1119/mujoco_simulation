@@ -8,17 +8,33 @@ Integrates all modules from the lab:
 
 Architecture
 ============
-1. Path Planning     – 12 edges of a cube, each drawn as a quintic joint-space
-                       trajectory between IK-solved waypoints.
-2. IK                – Damped Least Squares IK for each cube vertex (8 vertices).
-3. Position Control  – MuJoCo Menagerie UR5e has built-in PD position servos.
+1. Path Planning     – vertex visiting order (cube_drawing_path), 13 points.
+2. IK                – Damped Least Squares IK at each path point (vertices only).
+3. Trajectory        – one quintic joint-space segment per pair of consecutive
+                       IK solutions, SEGMENT_DURATION seconds each.
+4. Position Control  – MuJoCo Menagerie UR5e has built-in PD position servos.
                        We augment ctrl with gravity compensation and velocity
                        feedforward for sub-mm tracking:
                          ctrl = q_des + g(q)/Kp + Kd*qd_des/Kp
-4. MuJoCo Viewer     – launch_passive with real-time trail and cube wireframe overlay.
+5. MuJoCo Viewer     – launch_passive with real-time trail and cube wireframe overlay.
 
-Run:
-    python3 lab-2-Ur5e-robotics-lab/src/c3_draw_cube.py
+How one segment is drawn (vertex A -> vertex B)
+===============================================
+    p_A --IK--> q_A ===== quintic in JOINT space, T = 2 s =====> q_B <--IK-- p_B
+IK runs only at the two vertices. In between, every joint follows
+q_i(t) = q_A,i + (q_B,i - q_A,i) * s(t/T), s(u) = 10u^3 - 15u^4 + 6u^5
+(the minimum-jerk profile, applied to joint angles instead of EE position).
+The EE therefore hits both vertices exactly but bows 2-5 mm between them,
+because FK is nonlinear. The printed Cartesian error compares the EE with
+FK(q_des), so it measures controller tracking, not edge straightness.
+
+Known issue: cube_drawing_path() currently draws 3 face diagonals instead of
+3 top edges. See docs/C3_DRAW_CUBE.md §6 and docs/LESSONS.md §6.
+
+Full walkthrough: docs/C3_DRAW_CUBE.md
+
+Run (from the repo root):
+    env -u PYTHONPATH LD_LIBRARY_PATH= .venv/bin/python lab2_ur5e/src/c3_draw_cube.py
 """
 
 from __future__ import annotations
@@ -91,8 +107,9 @@ def cube_vertices(center: np.ndarray, side: float) -> list[np.ndarray]:
 def cube_edges() -> list[tuple[int, int]]:
     """Return the 12 edges of a cube as vertex index pairs.
 
-    The order traces a path that visits all edges with minimal redundancy:
-    bottom face, vertical pillars, top face.
+    Used for the green wireframe overlay. Note that the list is NOT a chain:
+    an edge does not always start where the previous one ended
+    (e.g. (5, 1) is followed by (5, 6)).
     """
     return [
         # Bottom face
@@ -109,9 +126,18 @@ def cube_edges() -> list[tuple[int, int]]:
 
 
 def cube_drawing_path() -> list[int]:
-    """Return a vertex visitation order that draws the entire cube continuously.
+    """Return the vertex visiting order used for drawing (13 points, 12 segments).
 
-    This Eulerian-like path visits all 12 edges without lifting the pen.
+    Built as [first vertex of edge 0] + [end vertex of every edge], which
+    assumes cube_edges() is head-to-tail chained. It is not, so the result is
+    [0, 1, 2, 3, 0, 4, 5, 1, 6, 2, 7, 3, 4]:
+
+    - segments 1->6, 2->7, 3->4 are face DIAGONALS (14.1 cm), not edges;
+    - edges 4-7, 5-6, 6-7 are never drawn.
+
+    A single stroke over all 12 edges is impossible anyway (all 8 vertices have
+    odd degree); a valid continuous order retraces 3 edges, e.g.
+    0-1-2-3-0-4-5-6-7-4-5-1-2-6-7-3. See docs/LESSONS.md §6.
     """
     edges = cube_edges()
     path = [edges[0][0]]
@@ -128,6 +154,13 @@ def solve_cube_ik(vertices: list[np.ndarray],
                   path: list[int],
                   pin_model, pin_data, ee_fid: int) -> list[np.ndarray]:
     """Solve IK for each vertex in the drawing path.
+
+    This is the ONLY place IK runs: once per path point (13 calls), never
+    along an edge. The orientation is fixed to the EE orientation at Q_HOME
+    so the "pen" keeps pointing the same way. Each solve is seeded with the
+    previous solution, keeping consecutive configurations close (no branch
+    flips). If IK does not converge, a warning is printed and the
+    unconverged q is still returned.
 
     Args:
         vertices: Cube vertex positions.
@@ -168,6 +201,15 @@ def solve_cube_ik(vertices: list[np.ndarray],
 def build_cube_trajectory(joint_waypoints: list[np.ndarray],
                           dt: float = 0.002) -> list[JointTrajectoryPoint]:
     """Build a multi-segment quintic trajectory through IK waypoints.
+
+    Interpolation happens in JOINT space: for each pair (q_A, q_B) every joint
+    follows the same rest-to-rest quintic, so all joints start and stop
+    together and the robot halts at every vertex (qd = qdd = 0 there).
+    q, qd and qdd are analytic, which gives the controller exact feedforward.
+
+    The EE path between vertices is FK(q(t)) and is therefore curved
+    (2-5 mm bow on a 10 cm edge). For straight edges, interpolate the EE
+    position instead (minimum jerk in task space + IK at every step).
 
     Args:
         joint_waypoints: Joint configurations at each vertex.
@@ -288,7 +330,8 @@ def main() -> None:
     ee_site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "attachment_site")
 
     # Settle at the first waypoint for 3 s so the PD servo reaches
-    # steady state before the trajectory begins.
+    # steady state before the trajectory begins. Same control law as the
+    # main loop with qd_des = 0: ctrl = q0 + g/Kp holds the arm without sag.
     print("\n  Settling at start position (3 s)...")
     for _ in range(1500):
         g = data.qfrc_bias[:NUM_JOINTS].copy()
@@ -336,7 +379,9 @@ def main() -> None:
             # Metrics
             ee = data.site_xpos[ee_site_id].copy()
 
-            # Desired EE position from FK
+            # Desired EE position from FK of the joint-space plan. NOTE: this
+            # is a point on the curved joint-space path, not on the straight
+            # cube edge, so err measures tracking of the plan only.
             pin.forwardKinematics(pin_model, pin_data, tp.q)
             pin.updateFramePlacements(pin_model, pin_data)
             ee_des = pin_data.oMf[ee_fid].translation.copy()

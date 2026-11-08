@@ -1,4 +1,5 @@
 lab2_ur5e/models/mujoco_menagerie/
+third_party/
 .venv/
 .vscode/
 .claude/

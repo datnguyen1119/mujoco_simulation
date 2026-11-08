@@ -65,6 +65,26 @@ class TestTrapezoidalTrajectory(unittest.TestCase):
         a_max = np.full(NUM_JOINTS, 4.0)
         traj = trapezoidal_trajectory(Q_HOME, Q_END, v_max, a_max, 0.01)
         np.testing.assert_allclose(traj[0].q, Q_HOME, atol=1e-6)
+        np.testing.assert_allclose(traj[-1].q, Q_END, atol=1e-6)
+
+    def test_synchronized_joints_reach_goal(self) -> None:
+        """Non-limiting joints must still land on the goal (regression).
+
+        Several joints hit v_max here; the old synchronization reused v_max
+        with a_max for them and overshot/undershot by ~11 deg.
+        """
+        q0 = np.deg2rad([0.0, -90.0, 60.0, -60.0, -90.0, 0.0])
+        q1 = np.deg2rad([-177.7, -101.5, 107.2, -95.8, -90.0, -177.7])
+        v_max = VELOCITY_LIMITS * 0.5
+        a_max = np.full(NUM_JOINTS, 4.0)
+        traj = trapezoidal_trajectory(q0, q1, v_max, a_max, 0.002)
+        np.testing.assert_allclose(traj[-1].q, q1, atol=1e-6)
+        q = np.array([pt.q for pt in traj])
+        qd = np.array([pt.qd for pt in traj])
+        self.assertTrue(np.all(np.abs(qd) <= v_max + 1e-9))
+        # Position must be the integral of velocity (no hidden jumps).
+        np.testing.assert_allclose(np.diff(q, axis=0) / 0.002,
+                                   0.5 * (qd[1:] + qd[:-1]), atol=0.05)
 
 
 class TestMultiSegmentTrajectory(unittest.TestCase):

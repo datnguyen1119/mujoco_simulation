@@ -172,11 +172,13 @@ def trapezoidal_trajectory(q_start: np.ndarray, q_end: np.ndarray,
                 q[i] = q_start[i]
                 continue
 
-            # Recompute per-joint profile with synchronized T
+            # Recompute per-joint profile with synchronized T: keep a_max and
+            # pick the cruise velocity that covers dq_abs in exactly T_total,
+            # i.e. solve dq = v * (T - v / a) for the smaller root.
             T_j = T_total
-            # Effective acceleration for this joint
-            v_eff = min(v_max[i], dq_abs[i] / (T_j / 2))
-            a_eff = v_eff / (T_j / 2) if dq_abs[i] <= v_eff * T_j / 2 else a_max[i]
+            a_eff = a_max[i]
+            disc = max(0.0, (a_eff * T_j) ** 2 - 4.0 * a_eff * dq_abs[i])
+            v_eff = 0.5 * (a_eff * T_j - np.sqrt(disc))
             t_acc_j = v_eff / a_eff
             t_dec_start = T_j - t_acc_j
 
@@ -203,6 +205,12 @@ def trapezoidal_trajectory(q_start: np.ndarray, q_end: np.ndarray,
 
         points.append(JointTrajectoryPoint(t=t_c, q=q, qd=qd, qdd=qdd))
         t += dt
+
+    # T_total is rarely a multiple of dt; always finish exactly on the goal.
+    if points[-1].t < T_total - 1e-12:
+        points.append(JointTrajectoryPoint(t=T_total, q=q_end.copy(),
+                                            qd=np.zeros(NUM_JOINTS),
+                                            qdd=np.zeros(NUM_JOINTS)))
     return points
 
 
